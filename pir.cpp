@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <opencv/highgui.h>
 #include <qpid/messaging/Connection.h>
 #include <qpid/messaging/Message.h>
 #include <qpid/messaging/Sender.h>
@@ -9,6 +10,7 @@
 
 #include <sstream>
 #include <string>
+
 
 using namespace qpid::messaging;
 using namespace qpid::types;
@@ -21,7 +23,7 @@ int len=0;
 
 
 int main(int argc, char** argv) {
-    const char* url = argc>1 ? argv[1] : "amqp:tcp:127.0.0.1:5672";
+    const char* url = argc>1 ? argv[1] : "amqp:tcp:127.0.0.1:9999";
     const char* address = argc>2 ? argv[2] : "message_queue; {create: always}";
     std::string connectionOptions = argc > 3 ? argv[3] : "";
     
@@ -43,7 +45,20 @@ int main(int argc, char** argv) {
         content["colours"] = colours;
         content["uuid"] = Uuid(true);
 		
-		FILE* fp=fopen("./1.JPG","rb");
+	CvCapture* capture = cvCreateCameraCapture(0);
+	IplImage* frame;
+	frame = cvQueryFrame(capture);
+//	cvReleaseCapture(&capture);
+//	content["iplimage"]=*frame;
+	string sip;
+	sip.assign((char*)frame,frame->nSize);
+	printf("capture size = %d\n",frame->nSize);		
+	content["iplimage"]=sip;
+	string sdd;
+	sdd.assign((char*)frame->imageData,frame->imageSize);
+	printf("imgsize = %d\n",frame->imageSize);
+	content["iplimagedata"]=sdd;
+		FILE* fp=fopen("./1.jpg","rb");
 		fseek(fp, 0, SEEK_END);
 		unsigned int size = ftell(fp);
 		fseek(fp, 0, SEEK_SET);
@@ -60,6 +75,7 @@ int main(int argc, char** argv) {
         sender.send(message, true);
 
         connection.close();
+	cvReleaseCapture(&capture);
         return 0;
     } catch(const std::exception& error) {
         std::cout << error.what() << std::endl;
