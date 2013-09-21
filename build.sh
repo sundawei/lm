@@ -1,1 +1,1 @@
-g++ -Wall `pkg-config --cflags opencv` pir.cpp `pkg-config --libs opencv` -lqpidclient -lqpidmessaging -o pir
+g++ -Wall `pkg-config --cflags opencv` pir.cpp `pkg-config --libs opencv` -lqpidclient -lqpidmessaging -lpthread -o pir
