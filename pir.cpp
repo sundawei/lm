@@ -34,6 +34,42 @@ pthread_t sndimg_id=0;
 sem_t req_img;
 sem_t snd_img;
 
+
+void sendconfig(string s)//send config file content to computer
+{
+    const char* url = "amqp:tcp:127.0.0.1:9999";
+    const char* address = "conf; {create: always}";
+    std::string connectionOptions = "";
+   
+    Connection connection(url, connectionOptions);
+    connection.setOption("reconnect", true);
+    connection.open();
+    Session session = connection.createSession();
+    Sender sender = session.createSender(address);
+    try {
+
+            Variant::Map content;
+            Message ms;
+            string spic;
+            
+            content["pic"] = s;
+            content["len"] = s.size();
+            encode(content, ms);
+            sender.send(ms, true);
+            
+        } 
+        catch(const std::exception& error) 
+        {
+            sender.close();
+        }
+
+    connection.close();
+    return ;
+}
+
+
+
+
 void* getcapturecmd(void * param)
 {
     const char* url =  "amqp:tcp:127.0.0.1:9999";
@@ -67,6 +103,35 @@ void* getcapturecmd(void * param)
                         {
                             sem_post(&req_img);
                         }
+                        if(s=="rcn")//got config file from computer
+                        {
+                            string sconfig=content["configfile"];
+                            FILE *fp = fopen("./config.area","wb");
+                            fwrite(sconfig.data(),sconfig.size(),1,fp);
+                            fclose(fp);
+                        }
+                        if(s=="gcn")//computer want 2 get config file from raspberry pi
+                        {
+                            FILE* fp=fopen("./config.area","rb");
+                            if(fp!=NULL)
+                            {
+                                fseek(fp, 0, SEEK_END);
+                                unsigned int size = ftell(fp);
+                                fseek(fp, 0, SEEK_SET);
+                                char* buffer =new char[size];
+                                fread(buffer,size,1,fp);
+                                fclose(fp);
+                                string sd;
+                                sd.assign(buffer,size);
+                                delete [] buffer;
+                                sendconfig(sd);
+                            }
+                            else//no config file
+                            {
+                                sendconfig(std::string(""));
+                            }
+                        }
+
                         session.acknowledge();
                     
                 } 
@@ -124,7 +189,7 @@ int main(int argc, char** argv) {
 
     struct timespec wt_time;
     wt_time.tv_sec = 0;
-    wt_time.tv_nsec = 5*1000;//20 ms
+    wt_time.tv_nsec = 1*1000;//20 ms
 
     sem_init(&req_img,0,0);
     sem_init(&snd_img,0,0);
