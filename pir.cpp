@@ -19,6 +19,13 @@
 #include <errno.h>
 #define size640x480 640*480*3
 
+typedef unsigned long DWORD;
+typedef DWORD   COLORREF;
+typedef unsigned char       BYTE;
+typedef unsigned short      WORD;
+#define RGB(r,g,b)          ((COLORREF)(((BYTE)(r)|((WORD)((BYTE)(g))<<8))|(((DWORD)(BYTE)(b))<<16)))
+
+
 using namespace qpid::messaging;
 using namespace qpid::types;
 
@@ -33,6 +40,12 @@ pthread_t sndimg_id=0;
 
 sem_t req_img;
 sem_t snd_img;
+
+#define MAX_CAR_COUNTING 100
+int CA_Index=-1;
+CvRect CA_A[MAX_CAR_COUNTING];
+COLORREF CA_COLOR[MAX_CAR_COUNTING]={RGB(255,0,0)};
+int CA_Type[MAX_CAR_COUNTING] = {0};//检测区类型:0常亮;1常灭;2闪烁
 
 
 void sendconfig(string s)//send config file content to computer
