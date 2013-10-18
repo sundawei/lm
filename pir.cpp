@@ -48,6 +48,13 @@ COLORREF CA_COLOR[MAX_CAR_COUNTING]={RGB(255,0,0)};
 int CA_Type[MAX_CAR_COUNTING] = {0};//检测区类型:0常亮;1常灭;2闪烁
 
 
+IplImage *imgprv=NULL;//前一帧彩色图像数据
+IplImage *imggreyprv=NULL;//前一帧灰度数据
+
+IplImage *colordiff=NULL;
+IplImage *greydiff=NULL;
+
+
 void sendconfig(string s)//send config file content to computer
 {
     const char* url = "amqp:tcp:127.0.0.1:9999";
@@ -210,9 +217,16 @@ int main(int argc, char** argv) {
     pthread_create(&getcapcmd_id, NULL, getcapturecmd, NULL);
     pthread_create(&sndimg_id,NULL,sendimg,NULL);
 
+    imgprv=cvCreateImage(cvSize(640,480),IPL_DEPTH_8U,3);
+    imggreyprv=cvCreateImage(cvSize(640,480),IPL_DEPTH_8U,1);
+
+    colordiff=cvCreateImage(cvSize(640,480),IPL_DEPTH_8U,3);
+    greydiff=cvCreateImage(cvSize(640,480),IPL_DEPTH_8U,1);
+
     CvCapture* capture = cvCreateCameraCapture(0);
     
     IplImage* frame;
+    int framecount=0;
     while(1) 
     {
         double t = (double)cvGetTickCount();
@@ -220,27 +234,75 @@ int main(int argc, char** argv) {
         frame = cvQueryFrame(capture);
         if(frame == NULL)
             break;
+        framecount++;
         
-        //*
+        IplImage* pgray=cvCreateImage(cvGetSize(frame),IPL_DEPTH_8U,1);
+
+        
+
+        cvCvtColor(frame,pgray,CV_BGR2GRAY);   
+        if(framecount>=2)
+        {
+            cvAbsDiff(frame,imgprv,colordiff);
+            cvAbsDiff(pgray,imggreyprv,greydiff);
+
+           // cvSaveImage("./greydiff0.jpg",greydiff);
+
+            for(int i=0;i<colordiff->height;i++)
+            {
+                for(int j=0;j<colordiff->width;j++)
+                {
+                    int B=CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+0);
+                    int G=CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+1);
+                    int R=CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+2);
+                    int A=CV_IMAGE_ELEM(greydiff,unsigned char,i,j);
+                    int mm=(std::max)(std::max(B,G),std::max(R,A));
+                    if(mm>10)
+                    {   
+                        CV_IMAGE_ELEM(greydiff,unsigned char,i,j)=255;
+                        CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+0)=255;
+                        CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+1)=255;
+                        CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+2)=255;
+                    }
+                    else
+                    {
+                        CV_IMAGE_ELEM(greydiff,unsigned char,i,j)=0;
+                        CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+0)=0;
+                        CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+1)=0;
+                        CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+2)=0;
+                    }
+                }
+            }
+            //cvSaveImage("./colordiff.jpg",colordiff);
+            //cvSaveImage("./greydiff.jpg",greydiff);
+            //break;
+
+        }
+
         //process;
         if(sem_timedwait(&req_img,&wt_time)==0)
         {
-            memcpy(buffer,frame->imageData,size640x480);
-            //IplImage* pgray=cvCreateImage(cvGetSize(frame),IPL_DEPTH_8U,1);
-            //cvCvtColor(frame,pgray,CV_BGR2GRAY);
-            //memcpy(buffer,pgray->imageData,size640x480/3);
-            //cvReleaseImage(&pgray);
+            //memcpy(buffer,frame->imageData,size640x480);
+            memcpy(buffer,colordiff->imageData,size640x480);
             sem_post(&snd_img);
         }
         else
-        {
-           // printf("sem_timedwait error %d\n",errno);
+        {   
+            
         }
-        //*/
+        
+        memcpy(imgprv->imageData,frame->imageData,size640x480);//保存前一帧彩色数据
+        memcpy(imggreyprv->imageData,pgray->imageData,size640x480/3);//保存前一帧灰度数据
+        cvReleaseImage(&pgray);
         t = (double)cvGetTickCount() - t;
         printf( "exec time = %gms\n", t/(cvGetTickFrequency()*1000.));
     }
     cvReleaseCapture(&capture);
+
+    cvReleaseImage(&imgprv);
+    cvReleaseImage(&imggreyprv);
+    cvReleaseImage(&colordiff);
+    cvReleaseImage(&greydiff);
 
     return 1;
 }
