@@ -53,38 +53,39 @@ IplImage *imggreyprv=NULL;//前一帧灰度数据
 
 IplImage *colordiff=NULL;
 IplImage *greydiff=NULL;
+IplImage *testimg=NULL;
 
 
 void sendconfig(string s)//send config file content to computer
 {
-    const char* url = "amqp:tcp:127.0.0.1:9999";
-    const char* address = "conf; {create: always}";
-    std::string connectionOptions = "";
-   
-    Connection connection(url, connectionOptions);
-    connection.setOption("reconnect", true);
-    connection.open();
-    Session session = connection.createSession();
-    Sender sender = session.createSender(address);
-    try {
+	const char* url = "amqp:tcp:127.0.0.1:9999";
+	const char* address = "conf; {create: always}";
+	std::string connectionOptions = "";
 
-            Variant::Map content;
-            Message ms;
-            string spic;
-            
-            content["pic"] = s;
-            content["len"] = s.size();
-            encode(content, ms);
-            sender.send(ms, true);
-            
-        } 
-        catch(const std::exception& error) 
-        {
-            sender.close();
-        }
+	Connection connection(url, connectionOptions);
+	connection.setOption("reconnect", true);
+	connection.open();
+	Session session = connection.createSession();
+	Sender sender = session.createSender(address);
+	try {
 
-    connection.close();
-    return ;
+		Variant::Map content;
+		Message ms;
+		string spic;
+
+		content["pic"] = s;
+		content["len"] = s.size();
+		encode(content, ms);
+		sender.send(ms, true);
+
+	} 
+	catch(const std::exception& error) 
+	{
+		sender.close();
+	}
+
+	connection.close();
+	return ;
 }
 
 
@@ -92,281 +93,358 @@ void sendconfig(string s)//send config file content to computer
 
 void* getcapturecmd(void * param)
 {
-    const char* url =  "amqp:tcp:127.0.0.1:9999";
-    const char* address = "cmd; {create: always}";
-    std::string connectionOptions ="";
-    while(1)
-    {
-        Connection connection(url,connectionOptions);
-        connection.setOption("reconnect", true);
-        connection.open();
-        Session session = connection.createSession();
-        Receiver receiver = session.createReceiver(address);
+	const char* url =  "amqp:tcp:127.0.0.1:9999";
+	const char* address = "cmd; {create: always}";
+	std::string connectionOptions ="";
+	while(1)
+	{
+		Connection connection(url,connectionOptions);
+		connection.setOption("reconnect", true);
+		connection.open();
+		Session session = connection.createSession();
+		Receiver receiver = session.createReceiver(address);
 
-        while(1)
-        {
-            try {
-                   
-                    Variant::Map content;
-                    Message ms;
-                    if(!receiver.fetch(ms,Duration::SECOND*10))
-                       {
-                            if(receiver.isClosed())
-                                break;
-                            printf("no message, continue 2 wait\n");
-                            continue;
-                       } 
-                        decode(ms, content);
-                        string s=content["cmd"];
-                        printf("[cmd]=%s\n",s.c_str());
-                        if(s=="cap")
-                        {
-                            sem_post(&req_img);
-                        }
-                        if(s=="rcn")//got config file from computer
-                        {
-                            string sconfig=content["configfile"];
-                            FILE *fp = fopen("./config.area","wb");
-                            fwrite(sconfig.data(),sconfig.size(),1,fp);
-                            fclose(fp);
-                        }
-                        if(s=="gcn")//computer want 2 get config file from raspberry pi
-                        {
-                            FILE* fp=fopen("./config.area","rb");
-                            if(fp!=NULL)
-                            {
-                                fseek(fp, 0, SEEK_END);
-                                unsigned int size = ftell(fp);
-                                fseek(fp, 0, SEEK_SET);
-                                char* buffer =new char[size];
-                                fread(buffer,size,1,fp);
-                                fclose(fp);
-                                string sd;
-                                sd.assign(buffer,size);
-                                delete [] buffer;
-                                sendconfig(sd);
-                            }
-                            else//no config file
-                            {
-                                sendconfig(std::string(""));
-                            }
-                        }
+		while(1)
+		{
+			try {
 
-                        session.acknowledge();
-                    
-                } 
-                catch(const std::exception& error) {
-                receiver.close();
-            }
-        }
+				Variant::Map content;
+				Message ms;
+				if(!receiver.fetch(ms,Duration::SECOND*10))
+				{
+					if(receiver.isClosed())
+						break;
+					printf("no message, continue 2 wait\n");
+					continue;
+				} 
+				decode(ms, content);
+				string s=content["cmd"];
+				printf("[cmd]=%s\n",s.c_str());
+				if(s=="cap")
+				{
+					sem_post(&req_img);
+				}
+				if(s=="rcn")//got config file from computer
+				{
+					string sconfig=content["configfile"];
+					FILE *fp = fopen("./config.area","wb");
+					fwrite(sconfig.data(),sconfig.size(),1,fp);
+					fclose(fp);
+				}
+				if(s=="gcn")//computer want 2 get config file from raspberry pi
+				{
+					FILE* fp=fopen("./config.area","rb");
+					if(fp!=NULL)
+					{
+						fseek(fp, 0, SEEK_END);
+						unsigned int size = ftell(fp);
+						fseek(fp, 0, SEEK_SET);
+						char* buffer =new char[size];
+						fread(buffer,size,1,fp);
+						fclose(fp);
+						string sd;
+						sd.assign(buffer,size);
+						delete [] buffer;
+						sendconfig(sd);
+					}
+					else//no config file
+					{
+						sendconfig(std::string(""));
+					}
+				}
 
-        connection.close();
-    }   
-    return 0;
+				session.acknowledge();
+
+			} 
+			catch(const std::exception& error) {
+				receiver.close();
+			}
+		}
+
+		connection.close();
+	}   
+	return 0;
 }
 
 void* sendimg(void * param)//send captured img
 {
-    const char* url = "amqp:tcp:127.0.0.1:9999";
-    const char* address = "img; {create: always}";
-    std::string connectionOptions = "";
-    while(1)
-    {
-        Connection connection(url, connectionOptions);
-        connection.setOption("reconnect", true);
-        connection.open();
-        Session session = connection.createSession();
-        Sender sender = session.createSender(address);
-        while(1)
-        {
-            try {
-                    if(sem_wait(&snd_img)==0)//get a cmd 2 snd img
-                    {
-                        Variant::Map content;
-                        Message ms;
-                        string spic;
-                        spic.assign(buffer,size640x480);
-                        content["pic"] = spic;
-                        encode(content, ms);
-                        sender.send(ms, true);
-                    }
-                    
-                } 
-                catch(const std::exception& error) 
-                {
-                    sender.close();
-                }
-        }
-        connection.close();
+	const char* url = "amqp:tcp:127.0.0.1:9999";
+	const char* address = "img; {create: always}";
+	std::string connectionOptions = "";
+	while(1)
+	{
+		Connection connection(url, connectionOptions);
+		connection.setOption("reconnect", true);
+		connection.open();
+		Session session = connection.createSession();
+		Sender sender = session.createSender(address);
+		while(1)
+		{
+			try {
+				if(sem_wait(&snd_img)==0)//get a cmd 2 snd img
+				{
+					Variant::Map content;
+					Message ms;
+					string spic;
+					spic.assign(buffer,size640x480);
+					content["pic"] = spic;
+					encode(content, ms);
+					sender.send(ms, true);
+				}
 
-    }
-    return 0;
+			} 
+			catch(const std::exception& error) 
+			{
+				sender.close();
+			}
+		}
+		connection.close();
+
+	}
+	return 0;
 }
 
+int HistogramBins = 256;
+float HistogramRange1[2] = {0,255};
+float *HistogramRange[1] = {&HistogramRange1[0]};
+typedef enum {back,object} entropy_state;
+double caculateCurrentEntropy(CvHistogram * Histogram1, int cur_threshold, entropy_state state)
+{
+	int start,end;
+	if(state == back) 
+	{
+		start = 0;
+		end = cur_threshold; 
+	}
+	else
+	{
+		start = cur_threshold;
+		end = 256;
+	}
+	int  total = 0;
+	for(int i = start; i < end; i++) 
+	{
+		total += (int)cvQueryHistValue_1D(Histogram1, i);
+	}
+	double cur_entropy = 0.0;
+	for(int i = start; i < end; i++)
+	{
+		if((int)cvQueryHistValue_1D(Histogram1,i) == 0)
+			continue;
+		double percentage = cvQueryHistValue_1D(Histogram1, i) / total;
+		cur_entropy += - percentage * logf(percentage); // 能量的定义公式
+	}
+	return cur_entropy;
+}
+// 寻找最大熵阈值并分割
+void MaxEntropy(IplImage *src, IplImage *dst)
+{
+	assert(src != NULL);
+	assert(src->depth == 8 && dst->depth == 8);
+	assert(src->nChannels == 1);
+	CvHistogram * hist  = cvCreateHist(1, &HistogramBins, CV_HIST_ARRAY, HistogramRange);
+	cvCalcHist(&src, hist);
+	double maxentropy = -1.0;
+	int max_index = -1;
+	// 循环测试每个分割点，寻找到最大的阈值分割点
+	for(int i = 0; i < HistogramBins; i++)
+	{
+		double cur_entropy = caculateCurrentEntropy(hist, i, object) + caculateCurrentEntropy(hist, i, back);
+		if(cur_entropy > maxentropy)
+		{
+			maxentropy = cur_entropy;
+			max_index = i;
+		}
+	}
+	cvThreshold(src, dst, (double)max_index, 255, CV_THRESH_BINARY);
+	cvReleaseHist(&hist);
+}
 
 int main(int argc, char** argv) {
 
 
-    struct timespec wt_time;
-    wt_time.tv_sec = 0;
-    wt_time.tv_nsec = 1*1000;//20 ms
+	struct timespec wt_time;
+	wt_time.tv_sec = 0;
+	wt_time.tv_nsec = 1*1000;//20 ms
 
-    sem_init(&req_img,0,0);
-    sem_init(&snd_img,0,0);
+	sem_init(&req_img,0,0);
+	sem_init(&snd_img,0,0);
 
-    pthread_create(&getcapcmd_id, NULL, getcapturecmd, NULL);
-    pthread_create(&sndimg_id,NULL,sendimg,NULL);
+	pthread_create(&getcapcmd_id, NULL, getcapturecmd, NULL);
+	pthread_create(&sndimg_id,NULL,sendimg,NULL);
 
-    imgprv=cvCreateImage(cvSize(640,480),IPL_DEPTH_8U,3);
-    imggreyprv=cvCreateImage(cvSize(640,480),IPL_DEPTH_8U,1);
+	imgprv=cvCreateImage(cvSize(640,480),IPL_DEPTH_8U,3);
+	imggreyprv=cvCreateImage(cvSize(640,480),IPL_DEPTH_8U,1);
 
-    colordiff=cvCreateImage(cvSize(640,480),IPL_DEPTH_8U,3);
-    greydiff=cvCreateImage(cvSize(640,480),IPL_DEPTH_8U,1);
+	colordiff=cvCreateImage(cvSize(640,480),IPL_DEPTH_8U,3);
+	greydiff=cvCreateImage(cvSize(640,480),IPL_DEPTH_8U,1);
+	testimg=cvCreateImage(cvSize(640,480),IPL_DEPTH_8U,1);
 
-    CvCapture* capture = cvCreateCameraCapture(0);
-    
-    IplImage* frame;
-    int framecount=0;
-    while(1) 
-    {
-        double t = (double)cvGetTickCount();
-        
-        frame = cvQueryFrame(capture);
-        if(frame == NULL)
-            break;
-        framecount++;
-        
-        IplImage* pgray=cvCreateImage(cvGetSize(frame),IPL_DEPTH_8U,1);
+	int hist_size = 256;  
+    float range[] = {0,255};
+    float* ranges[]={range};  
+    CvHistogram* gray_hist = cvCreateHist(1,&hist_size,CV_HIST_ARRAY,ranges,1);  
 
-        
+	CvCapture* capture = cvCreateCameraCapture(0);
 
-        cvCvtColor(frame,pgray,CV_BGR2GRAY);   
-        if(framecount>=2)
-        {
-            cvAbsDiff(frame,imgprv,colordiff);
-            cvAbsDiff(pgray,imggreyprv,greydiff);
+	IplImage* frame;
+	int framecount=0;
+	while(1) 
+	{
+		double t = (double)cvGetTickCount();
 
-           // cvSaveImage("./greydiff0.jpg",greydiff);
+		frame = cvQueryFrame(capture);
+		if(frame == NULL)
+			break;
+		framecount++;
 
-            for(int i=0;i<colordiff->height;i++)
-            {
-                for(int j=0;j<colordiff->width;j++)
-                {
-                    int B=CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+0);
-                    int G=CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+1);
-                    int R=CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+2);
-                    int A=CV_IMAGE_ELEM(greydiff,unsigned char,i,j);
-                    int mm=(std::max)(std::max(B,G),std::max(R,A));
-                    if(mm>10)
-                    {   
-                        CV_IMAGE_ELEM(greydiff,unsigned char,i,j)=255;
-                        CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+0)=255;
-                        CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+1)=255;
-                        CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+2)=255;
-                    }
-                    else
-                    {
-                        CV_IMAGE_ELEM(greydiff,unsigned char,i,j)=0;
-                        CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+0)=0;
-                        CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+1)=0;
-                        CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+2)=0;
-                    }
-                }
-            }
-            //cvSaveImage("./colordiff.jpg",colordiff);
-            //cvSaveImage("./greydiff.jpg",greydiff);
-            //break;
+		IplImage* pgray=cvCreateImage(cvGetSize(frame),IPL_DEPTH_8U,1);
 
-        }
 
-        //process;
-        if(sem_timedwait(&req_img,&wt_time)==0)
-        {
-            //memcpy(buffer,frame->imageData,size640x480);
-            memcpy(buffer,colordiff->imageData,size640x480);
-            sem_post(&snd_img);
-        }
-        else
-        {   
-            
-        }
-        
-        memcpy(imgprv->imageData,frame->imageData,size640x480);//保存前一帧彩色数据
-        memcpy(imggreyprv->imageData,pgray->imageData,size640x480/3);//保存前一帧灰度数据
-        cvReleaseImage(&pgray);
-        t = (double)cvGetTickCount() - t;
-        printf( "exec time = %gms\n", t/(cvGetTickFrequency()*1000.));
-    }
-    cvReleaseCapture(&capture);
 
-    cvReleaseImage(&imgprv);
-    cvReleaseImage(&imggreyprv);
-    cvReleaseImage(&colordiff);
-    cvReleaseImage(&greydiff);
+		cvCvtColor(frame,pgray,CV_BGR2GRAY);   
+		if(framecount>=2)
+		{
+			// cvAbsDiff(frame,imgprv,colordiff);
+			
+			cvAbsDiff(pgray,imggreyprv,greydiff);
+    		
+    		cvCalcHist(&greydiff,gray_hist,0,0); 
 
-    return 1;
+    		int wcount=0;
+    		int td=255;
+    		for(int a=255;a>0;a--)
+    		{
+    			wcount+=(int)(*cvGetHistValue_1D(gray_hist,a));
+    			//printf("%d\n",wcount);
+    			if(wcount>640*480*0.01)
+    			{
+    				td=a;
+    				break;
+    			}
+    		}
+
+
+			for(int i=0;i<colordiff->height;i++)
+			{
+				for(int j=0;j<colordiff->width;j++)
+				{
+					//  int B=CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+0);
+					//  int G=CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+1);
+					//  int R=CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+2);
+					int A=CV_IMAGE_ELEM(greydiff,unsigned char,i,j);
+					//  int mm=(std::max)(std::max(B,G),std::max(R,A));
+					//int mm=A;
+					if(A>td)
+					{   
+						// CV_IMAGE_ELEM(greydiff,unsigned char,i,j)=255;
+						CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+0)=255;//CV_IMAGE_ELEM(pgray,unsigned char,i,j);
+						CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+1)=255;//CV_IMAGE_ELEM(pgray,unsigned char,i,j);
+						CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+2)=255;//CV_IMAGE_ELEM(pgray,unsigned char,i,j);
+					}
+					else
+					{
+						//CV_IMAGE_ELEM(greydiff,unsigned char,i,j)=0;
+						CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+0)=0;
+						CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+1)=0;
+						CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+2)=0;
+					}
+				}
+			}
+			//cvSaveImage("./colordiff.jpg",colordiff);
+			//cvSaveImage("./greydiff.jpg",greydiff);
+			//break;
+
+		}
+
+		//process;
+		if(sem_timedwait(&req_img,&wt_time)==0)
+		{
+			//memcpy(buffer,frame->imageData,size640x480);
+			memcpy(buffer,colordiff->imageData,size640x480);
+			sem_post(&snd_img);
+		}
+		else
+		{   
+
+		}
+
+		memcpy(imgprv->imageData,frame->imageData,size640x480);//保存前一帧彩色数据
+		memcpy(imggreyprv->imageData,pgray->imageData,size640x480/3);//保存前一帧灰度数据
+		cvReleaseImage(&pgray);
+		t = (double)cvGetTickCount() - t;
+		printf( "exec time = %gms\n", t/(cvGetTickFrequency()*1000.));
+	}
+	cvReleaseCapture(&capture);
+
+	cvReleaseImage(&imgprv);
+	cvReleaseImage(&imggreyprv);
+	cvReleaseImage(&colordiff);
+	cvReleaseImage(&greydiff);
+
+	return 1;
 }
 /*
 
-    const char* url = argc>1 ? argv[1] : "amqp:tcp:127.0.0.1:9999";
-    const char* address = argc>2 ? argv[2] : "message_queue; {create: always}";
-    std::string connectionOptions = argc > 3 ? argv[3] : "";
-    
-    Connection connection(url, connectionOptions);
-    connection.setOption("reconnect", true);
-    try {
-        connection.open();
-        Session session = connection.createSession();
-        Sender sender = session.createSender(address);
+const char* url = argc>1 ? argv[1] : "amqp:tcp:127.0.0.1:9999";
+const char* address = argc>2 ? argv[2] : "message_queue; {create: always}";
+std::string connectionOptions = argc > 3 ? argv[3] : "";
 
-        Message message;
-        Variant::Map content;
-        content["id"] = 987654321;
-        content["name"] = "Widget";
-        content["percent"] = 0.99;
-        Variant::List colours;
-        colours.push_back(Variant("red"));
-        colours.push_back(Variant("green"));
-        colours.push_back(Variant("white"));
-        content["colours"] = colours;
-        content["uuid"] = Uuid(true);
-        
-    CvCapture* capture = cvCreateCameraCapture(0);
-    IplImage* frame;
-    frame = cvQueryFrame(capture);
+Connection connection(url, connectionOptions);
+connection.setOption("reconnect", true);
+try {
+connection.open();
+Session session = connection.createSession();
+Sender sender = session.createSender(address);
+
+Message message;
+Variant::Map content;
+content["id"] = 987654321;
+content["name"] = "Widget";
+content["percent"] = 0.99;
+Variant::List colours;
+colours.push_back(Variant("red"));
+colours.push_back(Variant("green"));
+colours.push_back(Variant("white"));
+content["colours"] = colours;
+content["uuid"] = Uuid(true);
+
+CvCapture* capture = cvCreateCameraCapture(0);
+IplImage* frame;
+frame = cvQueryFrame(capture);
 //  cvReleaseCapture(&capture);
 //  content["iplimage"]=*frame;
-    string sip;
-    sip.assign((char*)frame,frame->nSize);
-    printf("capture size = %d\n",frame->nSize);     
-    content["iplimage"]=sip;
-    string sdd;
-    sdd.assign((char*)frame->imageData,frame->imageSize);
-    printf("imgsize = %d\n",frame->imageSize);
-    content["iplimagedata"]=sdd;
-        FILE* fp=fopen("./1.jpg","rb");
-        fseek(fp, 0, SEEK_END);
-        unsigned int size = ftell(fp);
-        fseek(fp, 0, SEEK_SET);
-        fread(buffer,size,1,fp);
-        fclose(fp);
-        string spic;
-        spic.assign(buffer,size);
-        content["pic"] = spic;
+string sip;
+sip.assign((char*)frame,frame->nSize);
+printf("capture size = %d\n",frame->nSize);     
+content["iplimage"]=sip;
+string sdd;
+sdd.assign((char*)frame->imageData,frame->imageSize);
+printf("imgsize = %d\n",frame->imageSize);
+content["iplimagedata"]=sdd;
+FILE* fp=fopen("./1.jpg","rb");
+fseek(fp, 0, SEEK_END);
+unsigned int size = ftell(fp);
+fseek(fp, 0, SEEK_SET);
+fread(buffer,size,1,fp);
+fclose(fp);
+string spic;
+spic.assign(buffer,size);
+content["pic"] = spic;
 
 
-        printf("%s\n",content["uuid"].asString().c_str());
-        encode(content, message);
-    
-        sender.send(message, true);
+printf("%s\n",content["uuid"].asString().c_str());
+encode(content, message);
 
-        connection.close();
-    cvReleaseCapture(&capture);
-        return 0;
-    } catch(const std::exception& error) {
-        std::cout << error.what() << std::endl;
-        connection.close();
-    }
-    int ip=0;
-    std::cin>>ip;
-    */
+sender.send(message, true);
+
+connection.close();
+cvReleaseCapture(&capture);
+return 0;
+} catch(const std::exception& error) {
+std::cout << error.what() << std::endl;
+connection.close();
+}
+int ip=0;
+std::cin>>ip;
+*/
