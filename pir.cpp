@@ -37,6 +37,7 @@ int len=0;
 
 pthread_t getcapcmd_id=0;
 pthread_t sndimg_id=0;
+pthread_t globalcmd_id=0;
 
 sem_t req_img;
 sem_t snd_img;
@@ -55,6 +56,144 @@ IplImage *colordiff=NULL;
 IplImage *greydiff=NULL;
 IplImage *testimg=NULL;
 
+
+int RTmState[MAX_CAR_COUNTING][COUNT_V]={{0}};
+int GetRectState(IplImage* img,CvRect rect)
+{
+	Mat m(img,0);
+	int ct = countNonZero(m);
+	if(ct>img->width*img->height*0.7)
+		return 0;//on
+	else
+		return 1;//off
+}
+
+void CountAllR(IplImage* img,int framect)
+{
+	if(CA_Index>=0)
+	{
+		for(int i=0;i<=CA_Index;i++)
+		{
+			RTmState[i][framect%COUNT_V]=GetRectState(img,CA_A[i]);
+		}
+	}
+}
+int GetRS(int id)
+{
+	int zerocount=0;
+	int onecount=0;
+	for(int i=0;i<COUNT_V;i++)
+	{
+		if(RTmState[id][i]==0)
+			zerocount++;
+		else
+			onecount++;
+	}
+	if(zerocount<=5)
+		return 1;
+	else if(onecount<=5)
+		return 0;
+	else
+		return 2;
+}
+
+void makess(string& s)
+{
+	if(CA_Index>=0)
+	{
+		int len = 4*(CA_Index+1)+1;
+		char tmp[5]={0};
+		for(int  i=0;i<CA_Index;i++)
+		{
+			sprintf(tmp,"%d,%d;",GetRS(i),CA_Type[i]);
+			s+=string(tmp);
+		}
+		sprintf(tmp,"%d,%d",GetRS(CA_Index),CA_Type[CA_Index]);
+		s+=string(tmp);
+	}
+}
+
+void sendStatus()
+{
+	const char* url = "amqp:*:9999";
+    const char* address = "message_queue_status_place0; {create: always}";
+    std::string connectionOptions =  "";
+    
+    Connection connection(url, connectionOptions);
+	connection.setOption("reconnect", true);
+    try {
+        connection.open();
+        Session session = connection.createSession();
+        Sender sender = session.createSender(address);
+
+        Message message;
+        Variant::Map content;
+		content["idx"] = CA_Index;
+		string s;
+		makess(s);
+		content["status"] = s;
+
+
+        encode(content, message);
+	
+        sender.send(message, true);
+
+        connection.close();
+        return 0;
+    } catch(const std::exception& error) {
+        std::cout << error.what() << std::endl;
+        connection.close();
+    }
+    return 1;
+}
+
+
+void* getstatuscmd(void * param)
+{
+        const char* url =  "amqp:tcp:*:9999";
+        const char* address = "globalcmd; {create: always}";
+        std::string connectionOptions ="";
+        while(1)
+        {
+                Connection connection(url,connectionOptions);
+                connection.setOption("reconnect", true);
+                connection.open();
+                Session session = connection.createSession();
+                Receiver receiver = session.createReceiver(address);
+
+                while(1)
+                {
+                        try {
+
+                                Variant::Map content;
+                                Message ms;
+                                if(!receiver.fetch(ms,Duration::SECOND*10))
+                                {
+                                        if(receiver.isClosed())
+                                                break;
+                                        printf("no global message, continue 2 wait\n");
+                                        continue;
+                                } 
+                                decode(ms, content);
+                                string s=content["cmd"];
+                                printf("[cmd]=%s\n",s.c_str());
+                                if(s=="s")
+                                {
+                                        sendStatus();
+                                }
+
+                                session.acknowledge();
+
+                        } 
+                        catch(const std::exception& error) {
+                                receiver.close();
+                        }
+                }
+
+                connection.close();
+        }   
+        return 0;
+}
 
 void sendconfig(string s)//send config file content to computer
 {
@@ -272,6 +411,7 @@ int main(int argc, char** argv) {
 
 	pthread_create(&getcapcmd_id, NULL, getcapturecmd, NULL);
 	pthread_create(&sndimg_id,NULL,sendimg,NULL);
+	pthread_create(&globalcmd_id,NULL,getstatuscmd,NULL);
 
 	imgprv=cvCreateImage(cvSize(640,480),IPL_DEPTH_8U,3);
 	imggreyprv=cvCreateImage(cvSize(640,480),IPL_DEPTH_8U,1);
@@ -317,43 +457,36 @@ int main(int argc, char** argv) {
     		{
     			wcount+=(int)(*cvGetHistValue_1D(gray_hist,a));
     			//printf("%d\n",wcount);
-    			if(wcount>640*480*0.01)
+    			if(wcount>640*480*0.1)
     			{
     				td=a;
     				break;
     			}
     		}
 
+    		cvThreshold(greydiff, greydiff, (double)td, 255, CV_THRESH_BINARY);
+
+    		CountAllR(greydiff,framecount);
 
 			for(int i=0;i<colordiff->height;i++)
 			{
 				for(int j=0;j<colordiff->width;j++)
 				{
-					//  int B=CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+0);
-					//  int G=CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+1);
-					//  int R=CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+2);
 					int A=CV_IMAGE_ELEM(greydiff,unsigned char,i,j);
-					//  int mm=(std::max)(std::max(B,G),std::max(R,A));
-					//int mm=A;
 					if(A>td)
 					{   
-						// CV_IMAGE_ELEM(greydiff,unsigned char,i,j)=255;
 						CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+0)=255;//CV_IMAGE_ELEM(pgray,unsigned char,i,j);
 						CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+1)=255;//CV_IMAGE_ELEM(pgray,unsigned char,i,j);
 						CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+2)=255;//CV_IMAGE_ELEM(pgray,unsigned char,i,j);
 					}
 					else
 					{
-						//CV_IMAGE_ELEM(greydiff,unsigned char,i,j)=0;
 						CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+0)=0;
 						CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+1)=0;
 						CV_IMAGE_ELEM(colordiff,unsigned char,i,j*3+2)=0;
 					}
 				}
 			}
-			//cvSaveImage("./colordiff.jpg",colordiff);
-			//cvSaveImage("./greydiff.jpg",greydiff);
-			//break;
 
 		}
 
