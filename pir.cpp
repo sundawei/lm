@@ -26,6 +26,7 @@ using namespace qpid::messaging;
 using namespace qpid::types;
 using std::stringstream;
 using std::string;
+using namespace cv;
 char buffer[1024*1024*5]={0};
 int len=0;
 pthread_t getcapcmd_id=0;
@@ -34,21 +35,39 @@ pthread_t globalcmd_id=0;
 sem_t req_img;
 sem_t snd_img;
 #define MAX_CAR_COUNTING 100
+#define COUNT_V 20
 int CA_Index=-1;
 CvRect CA_A[MAX_CAR_COUNTING];
 COLORREF CA_COLOR[MAX_CAR_COUNTING]={RGB(255,0,0)};
 int CA_Type[MAX_CAR_COUNTING] = {0};//检测区类型:0常亮;1常灭;2闪烁
+char CA_Name[MAX_CAR_COUNTING][32] = {{0}};
 int RTmState[MAX_CAR_COUNTING][COUNT_V]={{0}};
 IplImage *imgprv=NULL;//前一帧彩色图像数据
 IplImage *imggreyprv=NULL;//前一帧灰度数据
 IplImage *colordiff=NULL;
 IplImage *greydiff=NULL;
 IplImage *testimg=NULL;
+
+
+void LoadConfigBuffer(std::string & s)
+{
+	int len = s.size();
+	char* pb =  new char[len];
+	memcpy(pb,s.data(),len);
+	memcpy(CA_A,pb,sizeof(CA_A));
+	memcpy(CA_COLOR,pb+sizeof(CA_A),sizeof(CA_COLOR));
+	memcpy(&CA_Index,pb+sizeof(CA_A)+sizeof(CA_COLOR),sizeof(CA_Index));
+	memcpy(CA_Type,pb+sizeof(CA_A)+sizeof(CA_COLOR)+sizeof(CA_Index),sizeof(CA_Type));
+	memcpy(CA_Name,pb+sizeof(CA_A)+sizeof(CA_COLOR)+sizeof(CA_Index)+sizeof(CA_Type),sizeof(CA_Name));
+	delete [] pb;
+}
+
+
 int GetRectState(IplImage* img,CvRect rect)
 {
 	Mat m(img,0);
 	int ct = countNonZero(m);
-	if(ct>img->width*img->height*0.7)
+	if(ct>img->width*img->height*0.2)
 		return 0;//on
 	else
 		return 1;//off
@@ -85,7 +104,6 @@ void makess(string& s)
 {
 	if(CA_Index>=0)
 	{
-		int len = 4*(CA_Index+1)+1;
 		char tmp[5]={0};
 		for(int  i=0;i<CA_Index;i++)
 		{
@@ -98,7 +116,7 @@ void makess(string& s)
 }
 void sendStatus()
 {
-	const char* url = "amqp:*:9999";
+	const char* url = "amqp:127.0.0.1:9999";//global server
     const char* address = "message_queue_status_place0; {create: always}";
     std::string connectionOptions =  "";
     
@@ -117,16 +135,14 @@ void sendStatus()
         encode(content, message);
         sender.send(message, true);
         connection.close();
-        return 0;
     } catch(const std::exception& error) {
         std::cout << error.what() << std::endl;
         connection.close();
     }
-    return 1;
 }
 void* getstatuscmd(void * param)
 {
-        const char* url =  "amqp:tcp:*:9999";
+        const char* url =  "amqp:tcp:127.0.0.1:9999";//global server
         const char* address = "globalcmd; {create: always}";
         std::string connectionOptions ="";
         while(1)
@@ -150,7 +166,7 @@ void* getstatuscmd(void * param)
                                 } 
                                 decode(ms, content);
                                 string s=content["cmd"];
-                                printf("[cmd]=%s\n",s.c_str());
+                                printf("[globalcmd]=%s\n",s.c_str());
                                 if(s=="s")
                                 {
                                         sendStatus();
@@ -229,6 +245,7 @@ void* getcapturecmd(void * param)
 					FILE *fp = fopen("./config.area","wb");
 					fwrite(sconfig.data(),sconfig.size(),1,fp);
 					fclose(fp);
+					LoadConfigBuffer(sconfig);
 				}
 				if(s=="gcn")//computer want 2 get config file from raspberry pi
 				{
@@ -301,6 +318,23 @@ int main(int argc, char** argv) {
 	struct timespec wt_time;
 	wt_time.tv_sec = 0;
 	wt_time.tv_nsec = 1*1000;//20 ms
+	FILE* fp=fopen("./config.area","rb");
+	if(fp!=NULL)
+	{
+		fseek(fp, 0, SEEK_END);
+		unsigned int size = ftell(fp);
+		fseek(fp, 0, SEEK_SET);
+		char* buffer =new char[size];
+		fread(buffer,size,1,fp);
+		fclose(fp);
+		string sd;
+		sd.assign(buffer,size);
+		delete [] buffer;
+		LoadConfigBuffer(sd);
+	}
+	
+
+
 	sem_init(&req_img,0,0);
 	sem_init(&snd_img,0,0);
 	pthread_create(&getcapcmd_id, NULL, getcapturecmd, NULL);
@@ -342,9 +376,9 @@ int main(int argc, char** argv) {
     				break;
     			}
     		}
-    		if(td<100)
-    			td=100;
-    		cvThreshold(greydiff, greydiff, (double)td, 255, CV_THRESH_BINARY);
+    		//if(td<100)
+    		//	td=100;
+    		cvThreshold(greydiff, greydiff, (double)10, 255, CV_THRESH_BINARY);
     		CountAllR(greydiff,framecount);
 			for(int i=0;i<colordiff->height;i++)
 			{
