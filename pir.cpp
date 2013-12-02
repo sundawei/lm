@@ -42,11 +42,23 @@ COLORREF CA_COLOR[MAX_CAR_COUNTING]={RGB(255,0,0)};
 int CA_Type[MAX_CAR_COUNTING] = {0};//检测区类型:0常亮;1常灭;2闪烁
 char CA_Name[MAX_CAR_COUNTING][32] = {{0}};
 int RTmState[MAX_CAR_COUNTING][COUNT_V]={{0}};
+
+int CA_countBmin[MAX_CAR_COUNTING]={0};//每个检测区检测到的最小亮度
+int CA_countBmax[MAX_CAR_COUNTING]={0};//每个检测区检测到的最大亮度
+int CA_state[MAX_CAR_COUNTING]={0};//每隔一段时间跟新每个检测区的状态
+
+#define COUNT_SPAN 60//每隔60帧统计一次
+#define LIGHTS 1.9//统计区最亮平均值比最暗平均值如果大于1.9倍，则认为是闪烁状态
+
+
 IplImage *imgprv=NULL;//前一帧彩色图像数据
 IplImage *imggreyprv=NULL;//前一帧灰度数据
+IplImage *imghsv=NULL;//转化到HSV色彩空间
 IplImage *colordiff=NULL;
 IplImage *greydiff=NULL;
 IplImage *testimg=NULL;
+
+int prvCntFrameCount=0;
 
 
 void LoadConfigBuffer(std::string & s)
@@ -62,6 +74,20 @@ void LoadConfigBuffer(std::string & s)
 	delete [] pb;
 }
 
+int GetAreaSumBright(IplImage* src,CvRect r)
+{
+	IplImage* imgr=0;
+	int sum=0;
+	unsigned char* pstart=(unsigned char*)src->imageData;
+	for(int i=r.y;i<r.y+r.height;i++)
+	{
+		for(int j=r.x;j<r.x+r.width;j++)
+		{
+			sum+=*(pstart+i*src->width*3+j*3+2);
+		}
+	}
+	return sum/(r.width*r.height);
+}
 
 int GetRectState(IplImage* img,CvRect rect)
 {
@@ -93,9 +119,9 @@ int GetRS(int id)
 		else
 			onecount++;
 	}
-	if(zerocount<=5)
+	if(zerocount<=2)
 		return 1;
-	else if(onecount<=5)
+	else if(onecount<=2)
 		return 0;
 	else
 		return 2;
@@ -229,12 +255,12 @@ void* getcapturecmd(void * param)
 				{
 					if(receiver.isClosed())
 						break;
-					printf("no message, continue 2 wait\n");
+					//printf("no message, continue 2 wait\n");
 					continue;
 				} 
 				decode(ms, content);
 				string s=content["cmd"];
-				printf("[cmd]=%s\n",s.c_str());
+				//printf("[cmd]=%s\n",s.c_str());
 				if(s=="cap")
 				{
 					sem_post(&req_img);
@@ -341,6 +367,7 @@ int main(int argc, char** argv) {
 	pthread_create(&sndimg_id,NULL,sendimg,NULL);
 	pthread_create(&globalcmd_id,NULL,getstatuscmd,NULL);
 	imgprv=cvCreateImage(cvSize(640,480),IPL_DEPTH_8U,3);
+	imghsv=cvCreateImage(cvSize(640,480),IPL_DEPTH_8U,3);
 	imggreyprv=cvCreateImage(cvSize(640,480),IPL_DEPTH_8U,1);
 	colordiff=cvCreateImage(cvSize(640,480),IPL_DEPTH_8U,3);
 	greydiff=cvCreateImage(cvSize(640,480),IPL_DEPTH_8U,1);
@@ -349,7 +376,11 @@ int main(int argc, char** argv) {
     float range[] = {0,255};
     float* ranges[]={range};  
     CvHistogram* gray_hist = cvCreateHist(1,&hist_size,CV_HIST_ARRAY,ranges,1);  
+#ifdef USECAM    
 	CvCapture* capture = cvCreateCameraCapture(0);
+#else
+	CvCapture* capture = cvCreateFileCapture("./pir.mp4");	
+#endif	
 	IplImage* frame;
 	int framecount=0;
 	while(1) 
@@ -357,8 +388,76 @@ int main(int argc, char** argv) {
 		double t = (double)cvGetTickCount();
 		frame = cvQueryFrame(capture);
 		if(frame == NULL)
+#ifdef USECAM			
+		{
 			break;
+		}
+#else
+		{
+			cvReleaseCapture(&capture);
+			capture = cvCreateFileCapture("./pir.mp4");	
+			frame = cvQueryFrame(capture);
+			if(frame == NULL)
+			{
+				break;
+			}
+		}	
+#endif
+
 		framecount++;
+		cvCvtColor(frame,imghsv,CV_BGR2HSV);
+		for(int i=0;i<=CA_Index;i++)
+		{
+			int ret=GetAreaSumBright(imghsv,CA_A[i]);
+			//printf("%d,%d\n",i,ret);
+			if(ret>CA_countBmax[i])
+			{
+				CA_countBmax[i]=ret;
+			}
+			if(ret<CA_countBmin[i])
+			{
+				CA_countBmin[i]=ret;
+			}
+		}
+
+		if(framecount-prvCntFrameCount>=COUNT_SPAN)//60帧统计一次灯的状态
+		{
+			prvCntFrameCount=framecount;
+
+
+
+			for(int i=0;i<=CA_Index;i++)//重新统计
+			{
+
+				CA_countBmin[i]>0?CA_countBmin[i]:CA_countBmin[i]=1;
+
+				if((float)CA_countBmax[i]/(float)CA_countBmin[i]>LIGHTS)
+				{
+					CA_state[i]=2;
+				}
+				else
+				{
+					CA_state[i]=0;
+				}
+				CA_countBmin[i]=1000;//每个检测区检测到的最小亮度
+				CA_countBmax[i]=0;//每个检测区检测到的最大亮度
+				//int CA_state[MAX_CAR_COUNTING]={0};//每隔一段时间跟新每个检测区的状态
+			}
+		}
+
+		for(int i=0;i<=CA_Index;i++)
+		{
+			if(CA_state[i]==2)
+			{
+				printf("%d,blink\n",i);
+			}
+			else
+			{
+				printf("%d,unknown\n",i);
+			}
+		}
+
+		/*
 		IplImage* pgray=cvCreateImage(cvGetSize(frame),IPL_DEPTH_8U,1);
 		cvCvtColor(frame,pgray,CV_BGR2GRAY);   
 		if(framecount>=2)
@@ -378,7 +477,8 @@ int main(int argc, char** argv) {
     		}
     		//if(td<100)
     		//	td=100;
-    		cvThreshold(greydiff, greydiff, (double)10, 255, CV_THRESH_BINARY);
+    		//td=60;
+    		cvThreshold(greydiff, greydiff, (double)30, 255, CV_THRESH_BINARY);
     		CountAllR(greydiff,framecount);
 			for(int i=0;i<colordiff->height;i++)
 			{
@@ -400,24 +500,26 @@ int main(int argc, char** argv) {
 				}
 			}
 		}
+		//*/
 		//process;
 		if(sem_timedwait(&req_img,&wt_time)==0)
 		{
-			memcpy(buffer,colordiff->imageData,size640x480);
+			memcpy(buffer,frame->imageData,size640x480);
 			sem_post(&snd_img);
 		}
 		else
 		{   
 			;
 		}
-		memcpy(imgprv->imageData,frame->imageData,size640x480);//保存前一帧彩色数据
-		memcpy(imggreyprv->imageData,pgray->imageData,size640x480/3);//保存前一帧灰度数据
-		cvReleaseImage(&pgray);
+		//memcpy(imgprv->imageData,frame->imageData,size640x480);//保存前一帧彩色数据
+		//memcpy(imggreyprv->imageData,pgray->imageData,size640x480/3);//保存前一帧灰度数据
+		//cvReleaseImage(&pgray);
 		t = (double)cvGetTickCount() - t;
-		printf( "exec time = %gms\n", t/(cvGetTickFrequency()*1000.));
+		//printf( "exec time = %gms\n", t/(cvGetTickFrequency()*1000.));
 	}
 	cvReleaseCapture(&capture);
 	cvReleaseImage(&imgprv);
+	cvReleaseImage(&imghsv);
 	cvReleaseImage(&imggreyprv);
 	cvReleaseImage(&colordiff);
 	cvReleaseImage(&greydiff);
