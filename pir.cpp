@@ -45,7 +45,7 @@ int RTmState[MAX_CAR_COUNTING][COUNT_V]={{0}};
 
 int CA_countBmin[MAX_CAR_COUNTING]={0};//每个检测区检测到的最小亮度
 int CA_countBmax[MAX_CAR_COUNTING]={0};//每个检测区检测到的最大亮度
-int CA_state[MAX_CAR_COUNTING]={0};//每隔一段时间跟新每个检测区的状态
+int CA_state[MAX_CAR_COUNTING]={-1};//每隔一段时间跟新每个检测区的状态
 
 #define COUNT_SPAN 60//每隔60帧统计一次
 #define LIGHTS 1.9//统计区最亮平均值比最暗平均值如果大于1.9倍，则认为是闪烁状态
@@ -59,6 +59,8 @@ IplImage *greydiff=NULL;
 IplImage *testimg=NULL;
 
 int prvCntFrameCount=0;
+float averagelight=0.0;//图像的平均亮度
+float lightvalue=0.0f;//如果图像上发现了亮的区域则统计亮值的平均值记录下来，用来区分画面上其他的灯亮灯灭的区域
 
 
 void LoadConfigBuffer(std::string & s)
@@ -128,6 +130,7 @@ int GetRS(int id)
 }
 void makess(string& s)
 {
+	/*
 	if(CA_Index>=0)
 	{
 		char tmp[5]={0};
@@ -137,6 +140,20 @@ void makess(string& s)
 			s+=string(tmp);
 		}
 		sprintf(tmp,"%d,%d",GetRS(CA_Index),CA_Type[CA_Index]);
+		s+=string(tmp);
+	}
+	//*/
+
+	if(CA_Index>=0)
+	{
+		char tmp[5]={0};
+		int i=0;
+		for(i=0;i<CA_Index;i++)
+		{
+			sprintf(tmp,"%d,%d;",CA_state[i],CA_Type[i]);
+			s+=string(tmp);
+		}
+		sprintf(tmp,"%d,%d",CA_state[i],CA_Type[CA_Index]);
 		s+=string(tmp);
 	}
 }
@@ -419,6 +436,12 @@ int main(int argc, char** argv) {
 				CA_countBmin[i]=ret;
 			}
 		}
+		if(framecount%10==0)//每隔3帧统计一下平均亮度
+		{
+			 CvScalar Scalar1;
+    		 Scalar1 = cvAvg(imghsv);
+    		 averagelight = Scalar1.val[2];
+		}
 
 		if(framecount-prvCntFrameCount>=COUNT_SPAN)//60帧统计一次灯的状态
 		{
@@ -434,10 +457,38 @@ int main(int argc, char** argv) {
 				if((float)CA_countBmax[i]/(float)CA_countBmin[i]>LIGHTS)
 				{
 					CA_state[i]=2;
+					if(lightvalue==0.0f)
+					lightvalue=CA_countBmax[i];
+					else
+					{
+						lightvalue=(float)(lightvalue+CA_countBmax[i])/2.0f;
+					}
 				}
 				else
 				{
-					CA_state[i]=0;
+					if(lightvalue!=0.0f)//画面上曾经确定了灯亮的区域
+					{
+						if(CA_countBmax[i]>=lightvalue*0.8)
+						{
+							CA_state[i]=0;//常亮
+						}
+						else
+						{
+							CA_state[i]=1;//常灭
+						}
+					}
+					else
+					{
+						if(CA_countBmax[i]>averagelight*1.2)//亮度值大于平均亮度值%20，认为灯是常亮的
+						{
+							CA_state[i]=0;//常亮
+						}
+						else
+						{
+							CA_state[i]=1;//长灭
+						}
+					}
+					//CA_state[i]=0;
 				}
 				CA_countBmin[i]=1000;//每个检测区检测到的最小亮度
 				CA_countBmax[i]=0;//每个检测区检测到的最大亮度
@@ -450,6 +501,14 @@ int main(int argc, char** argv) {
 			if(CA_state[i]==2)
 			{
 				printf("%d,blink\n",i);
+			}
+			else if(CA_state[i]==0)
+			{
+				printf("%d,on\n",i);
+			}
+			else if(CA_state[i]==1)
+			{
+				printf("%d,off\n",i);
 			}
 			else
 			{
