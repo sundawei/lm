@@ -17,6 +17,8 @@
 #include <errno.h>
 
 #define size640x480 640*480*3
+
+
 typedef unsigned long DWORD;
 typedef DWORD   COLORREF;
 typedef unsigned char       BYTE;
@@ -27,6 +29,8 @@ using namespace qpid::types;
 using std::stringstream;
 using std::string;
 using namespace cv;
+
+int framecount=0;//程序处理到图像的帧记数
 char buffer[1024*1024*5]={0};
 int len=0;
 pthread_t getcapcmd_id=0;
@@ -46,6 +50,8 @@ int RTmState[MAX_CAR_COUNTING][COUNT_V]={{0}};
 int CA_countBmin[MAX_CAR_COUNTING]={0};//每个检测区检测到的最小亮度
 int CA_countBmax[MAX_CAR_COUNTING]={0};//每个检测区检测到的最大亮度
 int CA_state[MAX_CAR_COUNTING]={-1};//每隔一段时间跟新每个检测区的状态
+
+int CA_state_firstframe[MAX_CAR_COUNTING]={-1};//第一次计算出检测区状态的帧计数
 
 #define COUNT_SPAN 60//每隔60帧统计一次
 #define LIGHTS 1.9//统计区最亮平均值比最暗平均值如果大于1.9倍，则认为是闪烁状态
@@ -78,7 +84,7 @@ void LoadConfigBuffer(std::string & s)
 
 int GetAreaSumBright(IplImage* src,CvRect r)
 {
-	IplImage* imgr=0;
+//	IplImage* imgr=0;
 	int sum=0;
 	unsigned char* pstart=(unsigned char*)src->imageData;
 	for(int i=r.y;i<r.y+r.height;i++)
@@ -150,11 +156,45 @@ void makess(string& s)
 		int i=0;
 		for(i=0;i<CA_Index;i++)
 		{
-			sprintf(tmp,"%d,%d;",CA_state[i],CA_Type[i]);
+			if(CA_state_firstframe[i]>=0)
+			{
+				if(abs(framecount-CA_state_firstframe[i])>COUNT_SPAN*2)
+				{
+					sprintf(tmp,"%d,%d;",CA_state[i],CA_Type[i]);
+					s+=string(tmp);
+				}
+				else
+				{
+					//printf("AAAAAAAAaaa%d\n",abs(framecount-CA_state_firstframe[i]));
+					sprintf(tmp,"%d,%d;",8,CA_Type[i]);
+					s+=string(tmp);
+				}
+			}
+			else
+			{
+				sprintf(tmp,"%d,%d;",8,CA_Type[i]);
+				s+=string(tmp);
+			}
+		}
+		if(CA_state_firstframe[i]>=0)
+		{
+			if(abs(framecount-CA_state_firstframe[i])>COUNT_SPAN*2)
+			{
+				sprintf(tmp,"%d,%d",CA_state[i],CA_Type[CA_Index]);
+				s+=string(tmp);
+			}
+			else
+			{
+				//printf("AAAAAAAAaaa%d\n",abs(framecount-CA_state_firstframe[i]));
+				sprintf(tmp,"%d,%d",8,CA_Type[CA_Index]);
+				s+=string(tmp);
+			}
+		}
+		else
+		{
+			sprintf(tmp,"%d,%d",8,CA_Type[CA_Index]);
 			s+=string(tmp);
 		}
-		sprintf(tmp,"%d,%d",CA_state[i],CA_Type[CA_Index]);
-		s+=string(tmp);
 	}
 }
 void sendStatus()
@@ -209,7 +249,7 @@ void* getstatuscmd(void * param)
                                 } 
                                 decode(ms, content);
                                 string s=content["cmd"];
-                                printf("[globalcmd]=%s\n",s.c_str());
+                                //printf("[globalcmd]=%s\n",s.c_str());
                                 if(s=="s")
                                 {
                                         sendStatus();
@@ -389,17 +429,17 @@ int main(int argc, char** argv) {
 	colordiff=cvCreateImage(cvSize(640,480),IPL_DEPTH_8U,3);
 	greydiff=cvCreateImage(cvSize(640,480),IPL_DEPTH_8U,1);
 	testimg=cvCreateImage(cvSize(640,480),IPL_DEPTH_8U,1);
-	int hist_size = 256;  
-    float range[] = {0,255};
-    float* ranges[]={range};  
-    CvHistogram* gray_hist = cvCreateHist(1,&hist_size,CV_HIST_ARRAY,ranges,1);  
+	//int hist_size = 256;  
+    //float range[] = {0,255};
+    //float* ranges[]={range};  
+   // CvHistogram* gray_hist = cvCreateHist(1,&hist_size,CV_HIST_ARRAY,ranges,1);  
 #ifdef USECAM    
 	CvCapture* capture = cvCreateCameraCapture(0);
 #else
 	CvCapture* capture = cvCreateFileCapture("./pir.mp4");	
 #endif	
 	IplImage* frame;
-	int framecount=0;
+
 	while(1) 
 	{
 		double t = (double)cvGetTickCount();
@@ -414,6 +454,13 @@ int main(int argc, char** argv) {
 			cvReleaseCapture(&capture);
 			capture = cvCreateFileCapture("./pir.mp4");	
 			frame = cvQueryFrame(capture);
+			for(int t=0;t<MAX_CAR_COUNTING;t++)
+			{
+				CA_state_firstframe[t]=-1;
+			}
+			framecount = 0; 
+
+			prvCntFrameCount = 0;
 			if(frame == NULL)
 			{
 				break;
@@ -463,6 +510,8 @@ int main(int argc, char** argv) {
 					{
 						lightvalue=(float)(lightvalue+CA_countBmax[i])/2.0f;
 					}
+					if(CA_state_firstframe[i]<0)
+					CA_state_firstframe[i]=framecount;
 				}
 				else
 				{
@@ -471,10 +520,14 @@ int main(int argc, char** argv) {
 						if(CA_countBmax[i]>=lightvalue*0.8)
 						{
 							CA_state[i]=0;//常亮
+							if(CA_state_firstframe[i]<0)
+							CA_state_firstframe[i]=framecount;
 						}
 						else
 						{
 							CA_state[i]=1;//常灭
+							if(CA_state_firstframe[i]<0)
+							CA_state_firstframe[i]=framecount;
 						}
 					}
 					else
@@ -482,10 +535,14 @@ int main(int argc, char** argv) {
 						if(CA_countBmax[i]>averagelight*1.2)//亮度值大于平均亮度值%20，认为灯是常亮的
 						{
 							CA_state[i]=0;//常亮
+							if(CA_state_firstframe[i]<0)
+							CA_state_firstframe[i]=framecount;
 						}
 						else
 						{
 							CA_state[i]=1;//长灭
+							if(CA_state_firstframe[i]<0)
+							CA_state_firstframe[i]=framecount;
 						}
 					}
 					//CA_state[i]=0;
@@ -495,7 +552,7 @@ int main(int argc, char** argv) {
 				//int CA_state[MAX_CAR_COUNTING]={0};//每隔一段时间跟新每个检测区的状态
 			}
 		}
-
+/*
 		for(int i=0;i<=CA_Index;i++)
 		{
 			if(CA_state[i]==2)
@@ -515,7 +572,7 @@ int main(int argc, char** argv) {
 				printf("%d,unknown\n",i);
 			}
 		}
-
+//*/
 		/*
 		IplImage* pgray=cvCreateImage(cvGetSize(frame),IPL_DEPTH_8U,1);
 		cvCvtColor(frame,pgray,CV_BGR2GRAY);   
